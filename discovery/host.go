@@ -5,9 +5,13 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"time"
 
 	"github.com/libp2p/go-libp2p"
+	connmgr "github.com/libp2p/go-libp2p-connmgr"
+	"github.com/libp2p/go-libp2p-core/control"
 	"github.com/libp2p/go-libp2p-core/host"
+	"github.com/libp2p/go-libp2p-core/network"
 	"github.com/libp2p/go-libp2p-core/peer"
 	discovery "github.com/libp2p/go-libp2p-discovery"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
@@ -31,6 +35,79 @@ func NewHost(ctx context.Context, port int) *Host {
 	}
 }
 
+type Gater struct {
+	h host.Host
+}
+
+// InterceptPeerDial tests whether we're permitted to Dial the specified peer.
+//
+// This is called by the network.Network implementation when dialling a peer.
+func (g *Gater) InterceptPeerDial(p peer.ID) (allow bool) {
+	protos, err := g.h.Peerstore().GetProtocols(p)
+	if err != nil {
+		return false
+	}
+	log.Println(p, "PeerDial:", protos)
+
+	return true
+}
+
+// InterceptAddrDial tests whether we're permitted to dial the specified
+// multiaddr for the given peer.
+//
+// This is called by the network.Network implementation after it has
+// resolved the peer's addrs, and prior to dialling each.
+func (g *Gater) InterceptAddrDial(p peer.ID, _ multiaddr.Multiaddr) (allow bool) {
+	protos, err := g.h.Peerstore().GetProtocols(p)
+	if err != nil {
+		return false
+	}
+	log.Println(p, "AddrDial:", protos)
+
+	return true
+}
+
+// InterceptAccept tests whether an incipient inbound connection is allowed.
+//
+// This is called by the upgrader, or by the transport directly (e.g. QUIC,
+// Bluetooth), straight after it has accepted a connection from its socket.
+func (g *Gater) InterceptAccept(_ network.ConnMultiaddrs) (allow bool) {
+	return true
+}
+
+// InterceptSecured tests whether a given connection, now authenticated,
+// is allowed.
+//
+// This is called by the upgrader, after it has performed the security
+// handshake, and before it negotiates the muxer, or by the directly by the
+// transport, at the exact same checkpoint.
+func (g *Gater) InterceptSecured(_ network.Direction, p peer.ID, _ network.ConnMultiaddrs) (allow bool) {
+	protos, err := g.h.Peerstore().GetProtocols(p)
+	if err != nil {
+		return false
+	}
+	log.Println(p, "Secured:", protos)
+
+	return true
+}
+
+// InterceptUpgraded tests whether a fully capable connection is allowed.
+//
+// At this point, the connection a multiplexer has been selected.
+// When rejecting a connection, the gater can return a DisconnectReason.
+// Refer to the godoc on the ConnectionGater type for more information.
+//
+// NOTE: the go-libp2p implementation currently IGNORES the disconnect reason.
+func (g *Gater) InterceptUpgraded(c network.Conn) (allow bool, reason control.DisconnectReason) {
+	protos, err := g.h.Peerstore().GetProtocols(c.RemotePeer())
+	if err != nil {
+		return false, 0
+	}
+	log.Println(c.RemotePeer(), "Upgraded:", protos)
+
+	return true, 0
+}
+
 func (h *Host) Start() error {
 	var err error
 	maddr, err := multiaddr.NewMultiaddr("/ip4/127.0.0.1/tcp/" + strconv.Itoa(h.port))
@@ -38,9 +115,12 @@ func (h *Host) Start() error {
 		return err
 	}
 
+	gater := &Gater{}
 	h.host, err = libp2p.New(h.ctx,
 		libp2p.ListenAddrs(maddr),
+		libp2p.ConnectionManager(connmgr.NewConnManager(3, 10, 0*time.Second)),
 	)
+	gater.h = h.host
 
 	for _, a := range h.host.Addrs() {
 		full := fmt.Sprintf("%s/p2p/%s", a, h.host.ID())

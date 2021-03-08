@@ -49,11 +49,19 @@ func main() {
 	}
 	time.Sleep(10 * time.Second)
 	printStats("after finding peers", hosts)
+
+	for _, h := range hosts {
+		if err := h.FindPeers(); err != nil {
+			h.host.ConnManager().TrimOpenConns(ctx)
+		}
+	}
+	time.Sleep(10 * time.Second)
+	printStats("after trimming peers", hosts)
 }
 
 func printStats(msg string, hosts []*Host) {
 	log.Println(msg)
 	for i, h := range hosts {
-		log.Printf("Host %03d (ns: %s): peers: %d\tconns: %d\n", i, h.getNS(), len(h.host.Peerstore().Peers()), len(h.host.Network().Conns()))
+		log.Printf("Host %03d (ns: %s): peers: %d\tconns: %d\n", i, h.getNS(), len(h.host.Peerstore().Peers()), len(h.host.Network().Peers()))
 	}
 }
