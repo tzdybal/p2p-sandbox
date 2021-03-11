@@ -165,7 +165,9 @@ func (h *Host) DiscoveryAdvertise() error {
 func (h *Host) FindPeers() error {
 	peerCh, err := h.disc.FindPeers(h.ctx, h.getNS())
 	for _ = range peerCh {
+		fmt.Printf(".")
 	}
+	fmt.Printf("\n")
 	return err
 }
 
